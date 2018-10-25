@@ -131,12 +131,14 @@ named!( ps_line<&str, Rule>,
     )
 );
 
+/// List provides domain parsing capabilities
 pub struct List {
     sections: HashMap<String, Vec<Rule>>,
 }
 
 impl List {
 
+    /// parse_domain parses a tld+1 from a domain
     pub fn parse_domain<'a>(&self, raw_input: &'a str) -> Option<&'a str> {
         if raw_input.len() == 0 {
             return None;
@@ -267,8 +269,8 @@ impl List {
         Ok(contents)
     }
 
-    /// Parse file set PUBLIC_SUFFIX_LIST_FILE="some/path/to/file.txt"
-    /// Will prefer the env variable to the passed &str path
+    /// PUBLIC_SUFFIX_LIST_FILE="some/path/to/file.txt"
+    /// parse_source_file Will prefer the env variable to the passed &str path
     pub fn parse_source_file(filename: &str) -> io::Result<Self> {
         let psl_path = env::var("PUBLIC_SUFFIX_LIST_FILE")
             .unwrap_or(filename.to_string());
