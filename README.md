@@ -1,3 +1,5 @@
+[![Crates.io](https://img.shields.io/crates/v/nom-psl.svg?maxAge=2592000)](https://crates.io/crates/nom-psl)
+
 # Faster public suffix domain parsing.
 The scope of this library is limited to finding the tld+1 of a given domain from the public suffix list.
 
