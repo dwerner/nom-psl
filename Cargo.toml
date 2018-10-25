@@ -1,6 +1,6 @@
 [package]
 name = "nom-psl"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Daniel Werner <dan.werner@gmail.com>"]
 description = "Fast public suffix list domain parsing, written in nom"
 license = "BSD-3-Clause"
