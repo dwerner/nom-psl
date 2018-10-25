@@ -1,0 +1,12 @@
+[package]
+name = "nom-psl"
+version = "0.1.0"
+authors = ["Daniel Werner <dan.werner@gmail.com>"]
+
+[dependencies]
+nom = "4"
+idna = "0.1"
+log = "0.4"
+
+[dev-dependencies]
+lazy_static = "1"
