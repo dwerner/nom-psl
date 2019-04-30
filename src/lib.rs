@@ -142,7 +142,13 @@ pub struct List {
 impl List {
     /// parse_domain parses a tld+1 from a domain
     pub fn parse_domain<'a>(&self, raw_input: &'a str) -> Option<&'a str> {
-        if raw_input.len() == 0 {
+        if let Some(dlen) = self.cache.read().unwrap().get(raw_input) {
+            if *dlen < raw_input.len() {
+                return Some(&raw_input[*dlen..]);
+            }
+        }
+
+        if raw_input.is_empty() {
             return None;
         }
 
