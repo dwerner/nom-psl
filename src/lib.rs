@@ -11,15 +11,17 @@ extern crate idna;
 extern crate log;
 
 use std::collections::HashMap;
-use std::io;
 use std::env;
-use std::path::PathBuf;
 use std::fs;
+use std::io;
+use std::path::PathBuf;
+
+use std::sync::RwLock;
 
 #[derive(Debug, PartialEq)]
 pub enum DivisionSep {
     Begin,
-    End
+    End,
 }
 
 #[derive(Debug, PartialEq)]
@@ -33,14 +35,14 @@ pub enum Division {
 pub enum SuffixType {
     Exception,
     Wildcard,
-    Normal
+    Normal,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Rule {
     Division(Division),
     Comment(String),
-    Suffix(Vec<String>, SuffixType)
+    Suffix(Vec<String>, SuffixType),
 }
 
 named!( division_begin<&str, Division>,
@@ -134,10 +136,10 @@ named!( ps_line<&str, Rule>,
 /// List provides domain parsing capabilities
 pub struct List {
     sections: HashMap<String, Vec<Rule>>,
+    cache: RwLock<HashMap<String, usize>>,
 }
 
 impl List {
-
     /// parse_domain parses a tld+1 from a domain
     pub fn parse_domain<'a>(&self, raw_input: &'a str) -> Option<&'a str> {
         if raw_input.len() == 0 {
@@ -164,29 +166,32 @@ impl List {
             let last = last.to_string();
             if let Some(section) = self.sections.get(&last) {
                 for rule in section.iter() {
-                    match rule {
-                        Rule::Suffix(rule_labels, _ty) => {
-                            let rlen = rule_labels.len();
-                            if rlen > input_tokens_len { continue; }
-                            if rule_labels[..] == input_tokens[..rlen] {
-                                matches.push(rule);
-                            }
-                        },
-                        _ => {}
+                    if let Rule::Suffix(rule_labels, _ty) = rule {
+                        let rlen = rule_labels.len();
+                        if rlen > input_tokens_len {
+                            continue;
+                        }
+                        if rule_labels[..] == input_tokens[..rlen] {
+                            matches.push(rule);
+                        }
                     }
                 }
             }
         }
 
         let rule = {
-            let exception = matches.iter().find(|e|{
-                if let Rule::Suffix(_, SuffixType::Exception) = e { true } else { false }
+            let exception = matches.iter().find(|e| {
+                if let Rule::Suffix(_, SuffixType::Exception) = e {
+                    true
+                } else {
+                    false
+                }
             });
 
             let rule = if let Some(_) = exception {
                 exception
             } else {
-                matches.iter().max_by_key(|x|{
+                matches.iter().max_by_key(|x| {
                     if let Rule::Suffix(xx, _) = x {
                         xx.len()
                     } else {
@@ -203,7 +208,7 @@ impl List {
             Some(Rule::Suffix(rule, ty)) => {
                 match ty {
                     SuffixType::Wildcard => {
-                        let rule_chars_len: usize = rule.iter().map(|i| i.len() ).sum();
+                        let rule_chars_len: usize = rule.iter().map(|i| i.len()).sum();
                         if let Some(domain_token) = input_tokens.get(rule.len()) {
                             let periods = rule.len();
                             let domain_label_len = domain_token.len();
@@ -213,35 +218,35 @@ impl List {
                         } else {
                             return None;
                         }
-                    },
+                    }
                     SuffixType::Exception => {
                         // throw away first token of rule, since it's an exception
                         let rule = &rule[..rule.len() - 1];
-                        let rule_chars_len: usize = rule.iter().map(|i| i.len() ).sum();
+                        let rule_chars_len: usize = rule.iter().map(|i| i.len()).sum();
                         let periods = rule.len() - 1;
                         let rule_chars_len = rule_chars_len + periods;
                         (rule_chars_len, rule.len())
-                    },
+                    }
                     SuffixType::Normal => {
-                        let rule_chars_len: usize = rule.iter().map(|i| i.len() ).sum();
+                        let rule_chars_len: usize = rule.iter().map(|i| i.len()).sum();
                         let periods = rule.len() - 1;
                         let rule_chars_len = rule_chars_len + periods;
                         (rule_chars_len, rule.len())
                     }
                 }
-            },
+            }
             _ => {
                 // If no rule matches, "*" rule (one level) prevails
-                let rule: [&str;0] = [];
-                let rule_chars_len: usize = rule.iter().map(|i| i.len() ).sum();
+                let rule: [&str; 0] = [];
+                let rule_chars_len: usize = rule.iter().map(|i| i.len()).sum();
                 match input_tokens.get(rule.len()) {
-                    Some(domain_token) =>  {
+                    Some(domain_token) => {
                         let periods = rule.len();
                         let domain_label_len = domain_token.len();
                         let rule_chars_len = rule_chars_len + domain_label_len + periods;
                         let domain_idx = rule.len() + 1;
                         (rule_chars_len, domain_idx)
-                    },
+                    }
                     None => {
                         return None;
                     }
@@ -252,6 +257,8 @@ impl List {
         if let Some(domain_token) = input_tokens.get(domain_idx) {
             let dlen = raw_input.len() - domain_token.len() - 1 - rule_chars_len;
             if dlen < raw_input.len() {
+                let mut cache = self.cache.write().unwrap();
+                cache.entry(raw_input.to_string()).or_insert(dlen);
                 return Some(&raw_input[dlen..]);
             }
         }
@@ -272,8 +279,7 @@ impl List {
     /// PUBLIC_SUFFIX_LIST_FILE="some/path/to/file.txt"
     /// parse_source_file Will prefer the env variable to the passed &str path
     pub fn parse_source_file(filename: &str) -> io::Result<Self> {
-        let psl_path = env::var("PUBLIC_SUFFIX_LIST_FILE")
-            .unwrap_or(filename.to_string());
+        let psl_path = env::var("PUBLIC_SUFFIX_LIST_FILE").unwrap_or(filename.to_string());
 
         let path = fs::canonicalize(PathBuf::from(psl_path))?;
         info!("Using public suffix list file: {:?}", path);
@@ -284,18 +290,17 @@ impl List {
 
     fn parse_source(source: String) -> Self {
         let mut sections: HashMap<String, Vec<Rule>> = HashMap::new();
-        let mut rest:&str = &source;
+        let mut rest: &str = &source;
         while let Ok((r, rule)) = ps_line(rest) {
             rest = r;
             match rule {
                 Rule::Suffix(s, ty) => {
                     let section = s.first().unwrap();
-                    let entry =
-                        sections.entry(section.clone()).or_insert_with(Vec::new);
+                    let entry = sections.entry(section.clone()).or_insert_with(Vec::new);
 
                     let contains_punycode = {
                         // https://en.wikipedia.org/wiki/Punycode#Separation_of_ASCII_characters
-                        s.iter().any(|x| !x.is_ascii() )
+                        s.iter().any(|x| !x.is_ascii())
                     };
 
                     if contains_punycode {
@@ -306,20 +311,23 @@ impl List {
                                 let encoded_with_newline = format!("{}\n", encoded);
                                 let synth_rule = ps_line(&encoded_with_newline);
                                 if let Ok((_, Rule::Suffix(synth_rule, ty))) = synth_rule {
-                                    entry.push(Rule::Suffix( synth_rule.clone(), ty ));
+                                    entry.push(Rule::Suffix(synth_rule.clone(), ty));
                                 }
                             }
                             Err(_) => {}
                         }
                     }
 
-                    entry.push(Rule::Suffix( s.clone(), ty ));
-                },
+                    entry.push(Rule::Suffix(s.clone(), ty));
+                }
                 _ => {}
             }
         }
 
-        List{ sections }
+        List {
+            sections,
+            cache: RwLock::new(HashMap::new()),
+        }
     }
 }
 
@@ -335,25 +343,30 @@ mod tests {
 
         let parsed_domain = list.parse_domain(domain);
 
-        assert_eq!(
-            parsed_domain,
-            Some("example.com.am")
-        );
+        assert_eq!(parsed_domain, Some("example.com.am"));
     }
 
     #[test]
     fn test_parse_list() {
         let example = "am\ncom.am\n!gov.am\n*.com.am\n";
         let parsed = List::parse_source(example.to_string());
-        assert_eq!(parsed.sections.get("am"),
-            Some(
-                &vec![
-                   Rule::Suffix(vec!["am".to_string()], SuffixType::Normal),
-                   Rule::Suffix(vec!["am".to_string(),"com".to_string()], SuffixType::Normal),
-                   Rule::Suffix(vec!["am".to_string(), "gov".to_string()], SuffixType::Exception),
-                   Rule::Suffix(vec!["am".to_string(), "com".to_string()], SuffixType::Wildcard),
-                ]
-            )
+        assert_eq!(
+            parsed.sections.get("am"),
+            Some(&vec![
+                Rule::Suffix(vec!["am".to_string()], SuffixType::Normal),
+                Rule::Suffix(
+                    vec!["am".to_string(), "com".to_string()],
+                    SuffixType::Normal
+                ),
+                Rule::Suffix(
+                    vec!["am".to_string(), "gov".to_string()],
+                    SuffixType::Exception
+                ),
+                Rule::Suffix(
+                    vec!["am".to_string(), "com".to_string()],
+                    SuffixType::Wildcard
+                ),
+            ])
         );
     }
 
@@ -361,34 +374,64 @@ mod tests {
     fn division() {
         let commentline = "// ===BEGIN ICANN DOMAINS===\n";
         let start = ps_line(commentline);
-        let expected = Rule::Division(Division::ICANN( DivisionSep::Begin));
-        assert_eq!(start, Ok( ("", expected)));
+        let expected = Rule::Division(Division::ICANN(DivisionSep::Begin));
+        assert_eq!(start, Ok(("", expected)));
     }
 
     #[test]
     fn comments() {
         let commentline = "//this is a comment\n";
         let start = ps_line(commentline);
-        assert_eq!(start, Ok(("", Rule::Comment("this is a comment".to_string()))), "testing comments");
+        assert_eq!(
+            start,
+            Ok(("", Rule::Comment("this is a comment".to_string()))),
+            "testing comments"
+        );
     }
-
 
     #[test]
     fn exception_rule_line() {
         let start = ps_line("!www.ck\n");
-        assert_eq!(start, Ok(("", Rule::Suffix(vec!["ck".to_string(), "www".to_string()], SuffixType::Exception))), "testing exception rules");
+        assert_eq!(
+            start,
+            Ok((
+                "",
+                Rule::Suffix(
+                    vec!["ck".to_string(), "www".to_string()],
+                    SuffixType::Exception
+                )
+            )),
+            "testing exception rules"
+        );
     }
 
     #[test]
     fn wildcard_rule_line() {
         let start = ps_line("*.ck\n");
-        assert_eq!(start, Ok(("", Rule::Suffix(vec!["ck".to_string()], SuffixType::Wildcard))), "testing wildcards");
+        assert_eq!(
+            start,
+            Ok((
+                "",
+                Rule::Suffix(vec!["ck".to_string()], SuffixType::Wildcard)
+            )),
+            "testing wildcards"
+        );
     }
 
     #[test]
     fn suffix_line() {
         let start = ps_line("edu.ai\n");
-        assert_eq!(start, Ok(("", Rule::Suffix(vec!["ai".to_string(), "edu".to_string()], SuffixType::Normal))), "testing suffix lines");
+        assert_eq!(
+            start,
+            Ok((
+                "",
+                Rule::Suffix(
+                    vec!["ai".to_string(), "edu".to_string()],
+                    SuffixType::Normal
+                )
+            )),
+            "testing suffix lines"
+        );
     }
 
     lazy_static! {
@@ -399,7 +442,7 @@ mod tests {
     }
 
     #[test]
-    fn comodo_suite (){
+    fn comodo_suite() {
         // Any copyright is dedicated to the Public Domain.
         // https://creativecommons.org/publicdomain/zero/1.0/
         // null input.
