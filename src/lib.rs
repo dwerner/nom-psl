@@ -140,6 +140,15 @@ pub struct List {
 }
 
 impl List {
+    /// expire internal cache
+    pub fn clear_cache(&self) {
+        self.cache.write().unwrap().clear()
+    }
+
+    pub fn cache(&self) -> &RwLock<HashMap<String, usize>> {
+        &self.cache
+    }
+
     /// parse_domain parses a tld+1 from a domain
     pub fn parse_domain<'a>(&self, raw_input: &'a str) -> Option<&'a str> {
         if let Some(dlen) = self.cache.read().unwrap().get(raw_input) {
@@ -194,7 +203,7 @@ impl List {
                 }
             });
 
-            let rule = if let Some(_) = exception {
+            if exception.is_some() {
                 exception
             } else {
                 matches.iter().max_by_key(|x| {
@@ -204,8 +213,7 @@ impl List {
                         0usize
                     }
                 })
-            };
-            rule
+            }
         };
 
         // Find the position of the domain in the source string, and return that slice
@@ -285,7 +293,7 @@ impl List {
     /// PUBLIC_SUFFIX_LIST_FILE="some/path/to/file.txt"
     /// parse_source_file Will prefer the env variable to the passed &str path
     pub fn parse_source_file(filename: &str) -> io::Result<Self> {
-        let psl_path = env::var("PUBLIC_SUFFIX_LIST_FILE").unwrap_or(filename.to_string());
+        let psl_path = env::var("PUBLIC_SUFFIX_LIST_FILE").unwrap_or_else(|_| filename.to_string());
 
         let path = fs::canonicalize(PathBuf::from(psl_path))?;
         info!("Using public suffix list file: {:?}", path);
@@ -299,34 +307,28 @@ impl List {
         let mut rest: &str = &source;
         while let Ok((r, rule)) = ps_line(rest) {
             rest = r;
-            match rule {
-                Rule::Suffix(s, ty) => {
-                    let section = s.first().unwrap();
-                    let entry = sections.entry(section.clone()).or_insert_with(Vec::new);
+            if let Rule::Suffix(s, ty) = rule {
+                let section = s.first().unwrap();
+                let entry = sections.entry(section.clone()).or_insert_with(Vec::new);
 
-                    let contains_punycode = {
-                        // https://en.wikipedia.org/wiki/Punycode#Separation_of_ASCII_characters
-                        s.iter().any(|x| !x.is_ascii())
-                    };
+                let contains_punycode = {
+                    // https://en.wikipedia.org/wiki/Punycode#Separation_of_ASCII_characters
+                    s.iter().any(|x| !x.is_ascii())
+                };
 
-                    if contains_punycode {
-                        let s = s.iter().rev().cloned().collect::<Vec<_>>().join(".");
-                        let result = idna::domain_to_ascii(&s);
-                        match result {
-                            Ok(encoded) => {
-                                let encoded_with_newline = format!("{}\n", encoded);
-                                let synth_rule = ps_line(&encoded_with_newline);
-                                if let Ok((_, Rule::Suffix(synth_rule, ty))) = synth_rule {
-                                    entry.push(Rule::Suffix(synth_rule.clone(), ty));
-                                }
-                            }
-                            Err(_) => {}
+                if contains_punycode {
+                    let s = s.iter().rev().cloned().collect::<Vec<_>>().join(".");
+                    let result = idna::domain_to_ascii(&s);
+                    if let Ok(encoded) = result {
+                        let encoded_with_newline = format!("{}\n", encoded);
+                        let synth_rule = ps_line(&encoded_with_newline);
+                        if let Ok((_, Rule::Suffix(synth_rule, ty))) = synth_rule {
+                            entry.push(Rule::Suffix(synth_rule.clone(), ty));
                         }
                     }
-
-                    entry.push(Rule::Suffix(s.clone(), ty));
                 }
-                _ => {}
+
+                entry.push(Rule::Suffix(s.clone(), ty));
             }
         }
 
