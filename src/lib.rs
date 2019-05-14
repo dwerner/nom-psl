@@ -5,8 +5,6 @@ extern crate nom;
 #[macro_use]
 extern crate lazy_static;
 
-extern crate idna;
-
 #[macro_use]
 extern crate log;
 
@@ -16,7 +14,8 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
-use std::sync::RwLock;
+use cache_2q::Cache;
+use std::sync::Mutex;
 
 #[derive(Debug, PartialEq)]
 pub enum DivisionSep {
@@ -136,22 +135,18 @@ named!( ps_line<&str, Rule>,
 /// List provides domain parsing capabilities
 pub struct List {
     sections: HashMap<String, Vec<Rule>>,
-    cache: RwLock<HashMap<String, usize>>,
+    cache: Mutex<Cache<String, usize>>,
 }
 
 impl List {
     /// expire internal cache
     pub fn clear_cache(&self) {
-        self.cache.write().unwrap().clear()
-    }
-
-    pub fn cache(&self) -> &RwLock<HashMap<String, usize>> {
-        &self.cache
+        self.cache.lock().unwrap().clear()
     }
 
     /// parse_domain parses a tld+1 from a domain
     pub fn parse_domain<'a>(&self, raw_input: &'a str) -> Option<&'a str> {
-        if let Some(dlen) = self.cache.read().unwrap().get(raw_input) {
+        if let Some(dlen) = self.cache.lock().unwrap().get(raw_input) {
             if *dlen < raw_input.len() {
                 return Some(&raw_input[*dlen..]);
             }
@@ -271,7 +266,7 @@ impl List {
         if let Some(domain_token) = input_tokens.get(domain_idx) {
             let dlen = raw_input.len() - domain_token.len() - 1 - rule_chars_len;
             if dlen < raw_input.len() {
-                let mut cache = self.cache.write().unwrap();
+                let mut cache = self.cache.lock().unwrap();
                 cache.entry(raw_input.to_string()).or_insert(dlen);
                 return Some(&raw_input[dlen..]);
             }
@@ -292,17 +287,17 @@ impl List {
 
     /// PUBLIC_SUFFIX_LIST_FILE="some/path/to/file.txt"
     /// parse_source_file Will prefer the env variable to the passed &str path
-    pub fn parse_source_file(filename: &str) -> io::Result<Self> {
+    pub fn parse_source_file(filename: &str, cache_size: usize) -> io::Result<Self> {
         let psl_path = env::var("PUBLIC_SUFFIX_LIST_FILE").unwrap_or_else(|_| filename.to_string());
 
         let path = fs::canonicalize(PathBuf::from(psl_path))?;
         info!("Using public suffix list file: {:?}", path);
 
         let contents = Self::read_file(&path)?;
-        Ok(Self::parse_source(contents))
+        Ok(Self::parse_source(contents, cache_size))
     }
 
-    fn parse_source(source: String) -> Self {
+    fn parse_source(source: String, cache_size: usize) -> Self {
         let mut sections: HashMap<String, Vec<Rule>> = HashMap::new();
         let mut rest: &str = &source;
         while let Ok((r, rule)) = ps_line(rest) {
@@ -334,7 +329,7 @@ impl List {
 
         List {
             sections,
-            cache: RwLock::new(HashMap::new()),
+            cache: Mutex::new(Cache::new(cache_size)),
         }
     }
 }
@@ -346,7 +341,7 @@ mod tests {
     #[test]
     fn test_parse_domain() {
         let example = "am\ncom.am\n!gov.am\n*.net.am\n";
-        let list = List::parse_source(example.to_string());
+        let list = List::parse_source(example.to_string(), 10);
         let domain = "sub.example.com.am";
 
         let parsed_domain = list.parse_domain(domain);
@@ -357,7 +352,7 @@ mod tests {
     #[test]
     fn test_parse_list() {
         let example = "am\ncom.am\n!gov.am\n*.com.am\n";
-        let parsed = List::parse_source(example.to_string());
+        let parsed = List::parse_source(example.to_string(), 10);
         assert_eq!(
             parsed.sections.get("am"),
             Some(&vec![
@@ -444,7 +439,7 @@ mod tests {
 
     lazy_static! {
         static ref LIST: List = {
-            let list = List::parse_source_file("public_suffix_list.dat");
+            let list = List::parse_source_file("public_suffix_list.dat", 10);
             list.expect("unable to parse PSL file")
         };
     }

@@ -7,11 +7,13 @@ license = "BSD-3-Clause"
 license_file = "LICENSE"
 repository = "https://github.com/dwerner/nom-psl"
 homepage = "https://github.com/dwerner/nom-psl"
+edition = "2018"
 
 [dependencies]
 nom = "4"
 idna = "0.1"
 log = "0.4"
+cache_2q = "0.10"
 
 [dev-dependencies]
 lazy_static = "1"
