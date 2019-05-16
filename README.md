@@ -6,6 +6,7 @@ The scope of this library is limited to finding the tld+1 of a given domain from
 ### Approach:
 - Load public suffix list entries into memory
 - Match immutable, owned values of domains to be parsed
+- Leverage a user-sized lru cache for entries
 
 ### Goals:
 - provide (mostly) compliant public suffix domain parsing.
@@ -25,7 +26,7 @@ The scope of this library is limited to finding the tld+1 of a given domain from
 ```
 lazy_static! {
     static ref LIST: List = {
-        let list = List::parse_source_file("public_suffix_list.dat");
+        let list = List::parse_source_file("public_suffix_list.dat", 10_000_000);
         list.expect("unable to parse PSL file")
     };
 }

@@ -3,6 +3,7 @@ name = "nom-psl"
 version = "1.1.0"
 authors = ["Daniel Werner <dan.werner@gmail.com>"]
 description = "Fast public suffix list domain parsing, written in nom"
+readme = "README.md"
 license = "BSD-3-Clause"
 license_file = "LICENSE"
 repository = "https://github.com/dwerner/nom-psl"
