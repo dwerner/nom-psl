@@ -13,6 +13,7 @@ use std::env;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cache_2q::Cache;
 use std::sync::Mutex;
@@ -136,12 +137,17 @@ named!( ps_line<&str, Rule>,
 pub struct List {
     sections: HashMap<String, Vec<Rule>>,
     cache: Mutex<Cache<String, usize>>,
+    cache_len: AtomicUsize,
 }
 
 impl List {
     /// expire internal cache
     pub fn clear_cache(&self) {
         self.cache.lock().unwrap().clear()
+    }
+
+    pub fn cache_len(&self) -> usize {
+        self.cache_len.load(Ordering::SeqCst)
     }
 
     /// parse_domain parses a tld+1 from a domain
@@ -268,6 +274,7 @@ impl List {
             if dlen < raw_input.len() {
                 let mut cache = self.cache.lock().unwrap();
                 cache.entry(raw_input.to_string()).or_insert(dlen);
+                self.cache_len.store(cache.len(), Ordering::SeqCst);
                 return Some(&raw_input[dlen..]);
             }
         }
@@ -330,6 +337,7 @@ impl List {
         List {
             sections,
             cache: Mutex::new(Cache::new(cache_size)),
+            cache_len: AtomicUsize::new(0),
         }
     }
 }
